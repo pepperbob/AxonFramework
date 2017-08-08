@@ -37,9 +37,11 @@ import java.util.concurrent.SynchronousQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.ExecutorService;
 
 import static java.util.Objects.requireNonNull;
 import static org.axonframework.common.io.IOUtils.closeQuietly;
+
 
 /**
  * EventProcessor implementation that tracks events from a {@link StreamableMessageSource}.
@@ -65,7 +67,7 @@ public class TrackingEventProcessor extends AbstractEventProcessor {
     private final TransactionManager transactionManager;
     private final int batchSize;
     private final String name;
-    private volatile ThreadPoolExecutor executorService;
+    private ExecutorService executorService;
     private volatile TrackingToken lastToken;
     private AtomicReference<State> state = new AtomicReference<>(State.NOT_STARTED);
 
@@ -84,8 +86,8 @@ public class TrackingEventProcessor extends AbstractEventProcessor {
      */
     public TrackingEventProcessor(String name, EventHandlerInvoker eventHandlerInvoker,
                                   StreamableMessageSource<TrackedEventMessage<?>> messageSource, TokenStore tokenStore,
-                                  TransactionManager transactionManager) {
-        this(name, eventHandlerInvoker, messageSource, tokenStore, transactionManager, NoOpMessageMonitor.INSTANCE);
+                                  TransactionManager transactionManager, ExecutorService executor) {
+        this(name, eventHandlerInvoker, messageSource, tokenStore, transactionManager, NoOpMessageMonitor.INSTANCE, executor);
     }
 
     /**
@@ -106,7 +108,7 @@ public class TrackingEventProcessor extends AbstractEventProcessor {
                                   StreamableMessageSource<TrackedEventMessage<?>> messageSource, TokenStore tokenStore,
                                   TransactionManager transactionManager, int batchSize) {
         this(name, eventHandlerInvoker, RollbackConfigurationType.ANY_THROWABLE, PropagatingErrorHandler.INSTANCE,
-                messageSource, tokenStore, transactionManager, batchSize, NoOpMessageMonitor.INSTANCE);
+                messageSource, tokenStore, transactionManager, batchSize, NoOpMessageMonitor.INSTANCE, null);
     }
 
     /**
@@ -122,13 +124,15 @@ public class TrackingEventProcessor extends AbstractEventProcessor {
      * @param tokenStore          Used to store and fetch event tokens that enable the processor to track its progress
      * @param transactionManager  The transaction manager used when processing messages
      * @param messageMonitor      Monitor to be invoked before and after event processing
+     * @param executorService     ExecutorService to handle execution
      */
     public TrackingEventProcessor(String name, EventHandlerInvoker eventHandlerInvoker,
                                   StreamableMessageSource<TrackedEventMessage<?>> messageSource, TokenStore tokenStore,
                                   TransactionManager transactionManager,
-                                  MessageMonitor<? super EventMessage<?>> messageMonitor) {
+                                  MessageMonitor<? super EventMessage<?>> messageMonitor, 
+                                  ExecutorService executorService) {
         this(name, eventHandlerInvoker, RollbackConfigurationType.ANY_THROWABLE, PropagatingErrorHandler.INSTANCE,
-                messageSource, tokenStore, transactionManager, 1, messageMonitor);
+                messageSource, tokenStore, transactionManager, 1, messageMonitor, executorService);
     }
 
     /**
@@ -150,7 +154,8 @@ public class TrackingEventProcessor extends AbstractEventProcessor {
                                   RollbackConfiguration rollbackConfiguration, ErrorHandler errorHandler,
                                   StreamableMessageSource<TrackedEventMessage<?>> messageSource, TokenStore tokenStore,
                                   TransactionManager transactionManager, int batchSize,
-                                  MessageMonitor<? super EventMessage<?>> messageMonitor) {
+                                  MessageMonitor<? super EventMessage<?>> messageMonitor,
+                                  ExecutorService executorService) {
         super(name, eventHandlerInvoker, rollbackConfiguration, errorHandler, messageMonitor);
         Assert.isTrue(batchSize > 0, () -> "batchSize needs to be greater than 0");
         this.messageSource = requireNonNull(messageSource);
@@ -158,6 +163,7 @@ public class TrackingEventProcessor extends AbstractEventProcessor {
         this.transactionManager = transactionManager;
         this.name = name;
         this.batchSize = batchSize;
+        this.executorService = executorService;
         registerInterceptor(new TransactionManagingInterceptor<>(transactionManager));
         registerInterceptor((unitOfWork, interceptorChain) -> {
             unitOfWork.onPrepareCommit(uow -> {
@@ -327,7 +333,7 @@ public class TrackingEventProcessor extends AbstractEventProcessor {
     public boolean isError() {
         return state.get() == State.PAUSED_ERROR;
     }
-
+    
     /**
      * Shut down the processor.
      */
@@ -336,16 +342,6 @@ public class TrackingEventProcessor extends AbstractEventProcessor {
         if (state.getAndUpdate(s -> State.SHUT_DOWN) != State.SHUT_DOWN) {
             executorService.shutdown();
         }
-    }
-
-    /**
-     * Returns an approximation of the number of threads currently processing events.
-     *
-     * @return an approximation of the number of threads currently processing events
-     */
-    public int activeProcessorThreads() {
-        ThreadPoolExecutor currentService = this.executorService;
-        return currentService == null ? 0 : currentService.getActiveCount();
     }
 
     /**

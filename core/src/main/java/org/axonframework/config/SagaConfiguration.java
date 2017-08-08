@@ -33,6 +33,7 @@ import org.axonframework.messaging.interceptors.CorrelationDataInterceptor;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.ExecutorService;
 import java.util.function.Function;
 
 /**
@@ -109,7 +110,8 @@ public class SagaConfiguration<S> implements ModuleConfiguration {
                     configuration.sagaManager.get(),
                     messageSourceBuilder.apply(configuration.config),
                     c.getComponent(TokenStore.class, InMemoryTokenStore::new),
-                    c.getComponent(TransactionManager.class, NoTransactionManager::instance));
+                    c.getComponent(TransactionManager.class, NoTransactionManager::instance),
+                    c.getComponent(ExecutorService.class));
             processor.registerInterceptor(new CorrelationDataInterceptor<>(c.correlationDataProviders()));
             return processor;
         });

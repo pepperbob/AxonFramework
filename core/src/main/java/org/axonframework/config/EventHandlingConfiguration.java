@@ -33,6 +33,8 @@ import java.util.function.Predicate;
 
 import static java.util.Comparator.comparing;
 
+import java.util.concurrent.ExecutorService;
+
 /**
  * Module Configuration implementation that defines an Event Handling component. Typically, such a configuration
  * consists of a number of Event Handlers, which are assigned to one or more Event Processor that define the
@@ -163,7 +165,8 @@ public class EventHandlingConfiguration implements ModuleConfiguration {
                                           source.apply(conf),
                                           conf.getComponent(TokenStore.class, InMemoryTokenStore::new),
                                           conf.getComponent(TransactionManager.class, NoTransactionManager::instance),
-                                          conf.messageMonitor(EventProcessor.class, name));
+                                          conf.messageMonitor(EventProcessor.class, name),
+                                          conf.getComponent(ExecutorService.class));
     }
 
     /**

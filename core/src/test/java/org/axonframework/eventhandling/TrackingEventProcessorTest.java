@@ -43,6 +43,11 @@ import static org.axonframework.eventsourcing.eventstore.EventStoreTestUtils.cre
 import static org.axonframework.eventsourcing.eventstore.EventUtils.asTrackedEventMessage;
 import static org.mockito.Mockito.*;
 
+import java.util.concurrent.SynchronousQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+
+import org.axonframework.common.AxonThreadFactory;
+
 /**
  * @author Rene de Waele
  */
@@ -53,6 +58,7 @@ public class TrackingEventProcessorTest {
     private TokenStore tokenStore;
     private EventHandlerInvoker eventHandlerInvoker;
     private EventListener mockListener;
+    private ThreadPoolExecutor threadPoolExecutor;
 
     private static TrackingEventStream trackingEventStreamOf(Iterator<TrackedEventMessage<?>> iterator) {
         return new TrackingEventStream() {
@@ -100,7 +106,8 @@ public class TrackingEventProcessorTest {
         mockListener = mock(EventListener.class);
         eventHandlerInvoker = new SimpleEventHandlerInvoker(mockListener);
         eventBus = new EmbeddedEventStore(new InMemoryEventStorageEngine());
-        testSubject = new TrackingEventProcessor("test", eventHandlerInvoker, eventBus, tokenStore, NoTransactionManager.INSTANCE);
+        threadPoolExecutor = new ThreadPoolExecutor(1, 1, 60, TimeUnit.SECONDS, new SynchronousQueue<>(), new AxonThreadFactory("TrackingEventProcessor"));
+        testSubject = new TrackingEventProcessor("test", eventHandlerInvoker, eventBus, tokenStore, NoTransactionManager.INSTANCE, threadPoolExecutor);
     }
 
     @After
@@ -173,7 +180,7 @@ public class TrackingEventProcessorTest {
             return null;
         }).when(mockListener).handle(any());
 
-        testSubject = new TrackingEventProcessor("test", eventHandlerInvoker, eventBus, tokenStore, NoTransactionManager.INSTANCE);
+        testSubject = new TrackingEventProcessor("test", eventHandlerInvoker, eventBus, tokenStore, NoTransactionManager.INSTANCE, threadPoolExecutor);
         testSubject.start();
         assertTrue("Expected 9 invocations on event listener by now", countDownLatch.await(5, TimeUnit.SECONDS));
         assertEquals(9, ackedEvents.size());
@@ -198,7 +205,7 @@ public class TrackingEventProcessorTest {
 
         testSubject.pause();
         // The thread may block for 1 second waiting for a next event to pop up
-        while (testSubject.activeProcessorThreads() > 0) {
+        while (threadPoolExecutor.getActiveCount() > 0) {
             Thread.sleep(1);
             // wait...
         }
@@ -239,7 +246,7 @@ public class TrackingEventProcessorTest {
             return null;
         }).when(mockListener).handle(any());
 
-        testSubject = new TrackingEventProcessor("test", eventHandlerInvoker, eventBus, tokenStore, NoTransactionManager.INSTANCE);
+        testSubject = new TrackingEventProcessor("test", eventHandlerInvoker, eventBus, tokenStore, NoTransactionManager.INSTANCE, threadPoolExecutor);
         testSubject.start();
         assertTrue("Expected 5 invocations on event listener by now", countDownLatch.await(10, TimeUnit.SECONDS));
         assertEquals(5, ackedEvents.size());
@@ -280,7 +287,7 @@ public class TrackingEventProcessorTest {
         List<TrackedEventMessage<?>> events =
                 createEvents(2).stream().map(event -> asTrackedEventMessage(event, trackingToken)).collect(toList());
         when(eventBus.openStream(null)).thenReturn(trackingEventStreamOf(events.iterator()));
-        testSubject = new TrackingEventProcessor("test", eventHandlerInvoker, eventBus, tokenStore, NoTransactionManager.INSTANCE);
+        testSubject = new TrackingEventProcessor("test", eventHandlerInvoker, eventBus, tokenStore, NoTransactionManager.INSTANCE, threadPoolExecutor);
 
         testSubject.registerInterceptor(((unitOfWork, interceptorChain) -> {
             unitOfWork.onCommit(uow -> {
